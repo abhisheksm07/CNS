@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { io } from "socket.io-client";
-import { Home, Radio, Send, ShieldAlert, ShieldCheck, Zap } from "lucide-react";
+import { Home, Radio, Send, ShieldAlert, ShieldCheck, Zap, AlertTriangle } from "lucide-react";
 import LiveLogs from "../components/LiveLogs.jsx";
 import ManipulationPanel from "../components/ManipulationPanel.jsx";
 import MetricCard from "../components/MetricCard.jsx";
@@ -39,6 +39,8 @@ const defaultResult = {
 
 export default function Dashboard({ onHome }) {
   const [socketState, setSocketState] = useState("connecting");
+  const [isLiveMode, setIsLiveMode] = useState(false);
+  const [roomId, setRoomId] = useState("quantum-room-1");
   const [message, setMessage] = useState("Transfer retinal vault seed to receiver node.");
   const [mode, setMode] = useState("quantum-secure");
   const [logs, setLogs] = useState([]);
@@ -53,17 +55,103 @@ export default function Dashboard({ onHome }) {
   const [selectedManipulations, setSelectedManipulations] = useState({});
   const [finalized, setFinalized] = useState(false);
   const [busy, setBusy] = useState(false);
+  
+  // Real-time state
+  const [liveManipulation, setLiveManipulation] = useState("none");
+  const [analytics, setAnalytics] = useState(null);
+  const [liveVisualState, setLiveVisualState] = useState("stable");
+  const [socket, setSocket] = useState(null);
 
-  const socket = useMemo(() => io(API, { transports: ["websocket", "polling"] }), []);
   const activeStep = SIMULATION_STEPS[currentStep];
-  const activeManipulation = selectedManipulations[activeStep.id] || "none";
-  const displayedResult = finalized ? finalResult || defaultResult : simulationData || defaultResult;
-  const currentVisualState = finalized ? displayedResult.visualState : activeManipulation === "eavesdrop" ? "attack" : activeManipulation === "crc-tamper" ? "crc" : activeManipulation === "quantum-noise" ? "noise" : "stable";
+  const activeManipulation = isLiveMode ? liveManipulation : (selectedManipulations[activeStep.id] || "none");
+  const displayedResult = useMemo(() => {
+    const res = finalized ? finalResult : simulationData;
+    if (!res || !res.transmission || !res.metrics || !res.quantum) {
+      return defaultResult;
+    }
+    return res;
+  }, [finalized, finalResult, simulationData]);
+  
+  const currentVisualState = isLiveMode 
+    ? liveVisualState 
+    : (finalized ? displayedResult.visualState : activeManipulation === "eavesdrop" ? "attack" : activeManipulation === "crc-tamper" ? "crc" : activeManipulation === "quantum-noise" ? "noise" : "stable");
 
   useEffect(() => {
-    socket.on("connect", () => setSocketState("online"));
-    socket.on("disconnect", () => setSocketState("offline"));
-    socket.on("log:event", (log) => setLogs((items) => [log, ...items].slice(0, 100)));
+    const s = io(API, { transports: ["websocket", "polling"] });
+    setSocket(s);
+
+    s.on("connect", () => {
+      console.log("Dashboard Connected:", s.id);
+      setSocketState("online");
+      if (isLiveMode) s.emit("session:join", { roomId, role: "observer" });
+    });
+    
+    s.on("connect_error", (err) => {
+        console.error("Dashboard Connection Error:", err);
+        setSocketState("offline");
+    });
+
+    s.on("disconnect", () => setSocketState("offline"));
+    s.on("log:event", (log) => setLogs((items) => [log, ...items].slice(0, 100)));
+
+    // Live Mode Listeners
+    s.on("simulation:result", (data) => {
+      setFinalResult(data);
+      if (data.analytics) setAnalytics(data.analytics);
+    });
+
+    s.on("sim:analytics", (data) => {
+      setAnalytics(data);
+    });
+
+    s.on("sim:step", (data) => {
+      if (!isLiveMode) return;
+      setSimulationStarted(true);
+      setFinalized(false);
+      const stepIdx = SIMULATION_STEPS.findIndex(s => s.id === data.stepId);
+      if (stepIdx !== -1) setCurrentStep(stepIdx);
+      setStepProgress(data.progress);
+      setLiveVisualState(data.state);
+      setLiveManipulation(data.manipulation);
+    });
+
+    s.on("sim:quantum", (data) => {
+      if (!isLiveMode) return;
+      setSimulationData(prev => ({
+        ...prev,
+        quantum: {
+          bits: data.bits,
+          error_rate: data.errorRate,
+          stability: data.stability,
+          compared_bits: data.comparedBits,
+          sampled_errors: data.sampledErrors,
+          detected: data.detected
+        }
+      }));
+    });
+
+    s.on("recv:message", (data) => {
+      if (!isLiveMode) return;
+      const visualState = data.secure ? "stable" : (data.manipulation === "eavesdrop" ? "attack" : data.manipulation === "crc-tamper" ? "crc" : "noise");
+      const result = {
+        transmission: {
+          original: "Incoming data...",
+          encrypted: "CIPHERTEXT_HIDDEN",
+          decrypted: data.decrypted,
+          sharedSecret: "DERIVED_VIA_QUANTUM",
+          crc: data.crcValid ? "VALID" : "INVALID",
+          receivedCrc: data.crcValid ? "VALID" : "INVALID",
+          crcValid: data.crcValid,
+          aesBits: 256
+        },
+        quantum: { bits: [0,1], detected: !data.secure }, // Placeholder as we get sim:quantum separately
+        metrics: data.metrics,
+        visualState: visualState
+      };
+      setFinalResult(result);
+      setFinalized(true);
+      setLiveVisualState(visualState);
+    });
 
     fetch(`${API}/api/logs`)
       .then((response) => response.json())
@@ -73,81 +161,48 @@ export default function Dashboard({ onHome }) {
       })
       .catch(() => setSocketState("api-offline"));
 
-    return () => socket.disconnect();
-  }, [socket]);
+    return () => s.disconnect();
+  }, [isLiveMode, roomId]);
 
   useEffect(() => {
     if (!isRunning || !simulationStarted || animationMode !== "auto" || finalized) return undefined;
-    const interval = window.setInterval(() => {
-      setStepProgress((progress) => {
-        const nextProgress = progress + 6 * animationSpeed;
-        if (nextProgress < 100) return nextProgress;
-        setCurrentStep((step) => {
-          const nextStep = Math.min(step + 1, SIMULATION_STEPS.length - 1);
-          setLogs((items) => [createLog(SIMULATION_STEPS[nextStep].log), ...items].slice(0, 100));
-          if (nextStep === SIMULATION_STEPS.length - 1) {
-            setIsRunning(false);
-            finalizeSimulation();
-          }
-          return nextStep;
-        });
-        return 0;
+    const interval = setInterval(() => {
+      setCurrentStep((prev) => {
+        if (prev >= SIMULATION_STEPS.length - 1) {
+          setIsRunning(false);
+          setFinalized(true);
+          return prev;
+        }
+        return prev + 1;
       });
-    }, 120);
-    return () => window.clearInterval(interval);
-  }, [animationMode, animationSpeed, finalized, isRunning, simulationStarted]);
+    }, STEP_DURATION / animationSpeed);
+    return () => clearInterval(interval);
+  }, [isRunning, simulationStarted, animationMode, finalized, animationSpeed]);
 
   const prepareSimulation = async () => {
     setBusy(true);
     setFinalized(false);
+    setAnalytics(null);
     setFinalResult(null);
-    setSelectedManipulations({});
-    setCurrentStep(0);
-    setStepProgress(0);
     try {
-      const response = await fetch(`${API}/api/transmit`, {
+      const response = await fetch(`${API}/api/simulate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, mode, attack: "none", dryRun: true })
+        body: JSON.stringify({ message, mode, manipulations: selectedManipulations }),
       });
-      if (!response.ok) throw new Error(`Prepare failed with ${response.status}`);
       const data = await response.json();
       setSimulationData(data);
+      setAnalytics(data.analytics);
       setSimulationStarted(true);
-      setLogs((items) => [createLog(SIMULATION_STEPS[0].log), createLog("[SYSTEM] Dry-run packet prepared; receiver output locked"), ...items].slice(0, 100));
-      setIsRunning(animationMode === "auto");
+      setCurrentStep(0);
+      setStepProgress(0);
+      
+      // Respect current mode - don't force auto if user chose manual
+      if (animationMode === "auto") {
+        setIsRunning(true);
+      }
     } catch (error) {
-      setLogs((items) => [createLog(`Backend prepare failed: ${error.message}`, "frontend", "critical"), ...items].slice(0, 100));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const finalizeSimulation = async () => {
-    if (finalized || busy) return;
-    setBusy(true);
-    try {
-      const response = await fetch(`${API}/api/transmit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message,
-          mode,
-          attack: Object.values(selectedManipulations).some((value) => value !== "none") ? "custom" : "none",
-          dryRun: false,
-          stepManipulations: selectedManipulations
-        })
-      });
-      if (!response.ok) throw new Error(`Finalize failed with ${response.status}`);
-      const data = await response.json();
-      setFinalResult(data);
-      setFinalized(true);
-      setLogs((items) => [
-        createLog(data.metrics.secure ? "[RESULT] Communication marked secure" : "[RESULT] Communication marked unsafe", "result", data.metrics.secure ? "success" : "critical"),
-        ...items
-      ].slice(0, 100));
-    } catch (error) {
-      setLogs((items) => [createLog(`Final simulation failed: ${error.message}`, "frontend", "critical"), ...items].slice(0, 100));
+      console.error("Simulation failed:", error);
     } finally {
       setBusy(false);
     }
@@ -155,167 +210,244 @@ export default function Dashboard({ onHome }) {
 
   const startSimulation = () => {
     if (!simulationStarted) {
-      prepareSimulation();
-      return;
+        prepareSimulation();
+    } else {
+        if (finalized) {
+            setFinalized(false);
+            setCurrentStep(0);
+        }
+        setAnimationMode("auto");
+        setIsRunning(true);
     }
-    if (currentStep === SIMULATION_STEPS.length - 1) {
-      finalizeSimulation();
-      return;
-    }
-    setIsRunning(true);
   };
 
   const pauseSimulation = () => setIsRunning(false);
-
   const nextStep = () => {
-    if (!simulationStarted) return;
-    setStepProgress(0);
-    setCurrentStep((step) => {
-      const next = Math.min(step + 1, SIMULATION_STEPS.length - 1);
-      setLogs((items) => [createLog(SIMULATION_STEPS[next].log), ...items].slice(0, 100));
-      if (next === SIMULATION_STEPS.length - 1) finalizeSimulation();
-      return next;
+    setAnimationMode("manual");
+    setIsRunning(false);
+    setCurrentStep((prev) => {
+        if (prev >= SIMULATION_STEPS.length - 1) {
+            setFinalized(true);
+            return prev;
+        }
+        return prev + 1;
     });
   };
 
   const prevStep = () => {
-    setStepProgress(0);
-    setCurrentStep((step) => Math.max(step - 1, 0));
+    setAnimationMode("manual");
+    setIsRunning(false);
+    setFinalized(false);
+    setCurrentStep((prev) => Math.max(prev - 1, 0));
   };
-
   const resetSimulation = () => {
     setSimulationStarted(false);
-    setSimulationData(null);
-    setFinalResult(null);
     setIsRunning(false);
     setCurrentStep(0);
-    setStepProgress(0);
-    setSelectedManipulations({});
     setFinalized(false);
-    setLogs((items) => [createLog("[SYSTEM] Simulator reset to idle state"), ...items].slice(0, 100));
+    setAnalytics(null);
+    setSimulationData(null);
   };
 
-  const injectManipulation = (manipulation) => {
-    if (!activeStep.canManipulate || !simulationStarted) return;
-    setSelectedManipulations((items) => ({ ...items, [activeStep.id]: manipulation }));
-    const label = manipulation === "none" ? "No manipulation selected" : manipulation;
-    setLogs((items) => [createLog(`[ATTACK] ${label} injected at ${activeStep.title}`, "attack", manipulation === "none" ? "info" : "warn"), ...items].slice(0, 100));
+  const injectManipulation = (stepId, type) => {
+    setSelectedManipulations((prev) => ({
+      ...prev,
+      [stepId]: prev[stepId] === type ? "none" : type
+    }));
   };
-
-  const receiverMessage = !simulationStarted
-    ? "Waiting for simulation start..."
-    : !finalized
-      ? `Packet currently in ${activeStep.title} stage...`
-      : displayedResult.transmission.decrypted || "No receiver payload released.";
 
   return (
-    <main className="relative min-h-screen overflow-hidden p-4 text-white lg:p-5">
-      <ParticleField count={45} />
-      <div className="absolute inset-0 grid-holo opacity-30" />
-      <header className="relative z-10 mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-display text-xs uppercase tracking-[0.28em] text-cyanline">Q-SecCom Interactive Simulator</p>
-          <h1 className="font-display text-2xl font-bold text-white md:text-4xl">3D Quantum Communication Pipeline</h1>
+    <main className="relative flex h-screen flex-col overflow-hidden bg-[#050712] text-white">
+      <ParticleField count={40} />
+      
+      <header className="relative z-10 border-b border-white/10 bg-black/40 backdrop-blur-md">
+        <div className="flex items-center justify-between px-8 py-4">
+          <div>
+            <p className="font-display text-[10px] uppercase tracking-[0.28em] text-cyanline">Q-SecCom Interactive Console</p>
+            <h1 className="font-display text-xl font-bold text-white md:text-2xl">Distributed Quantum Pipeline</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 rounded-md border border-white/10 bg-black/20 p-1">
+              <button
+                onClick={() => setIsLiveMode(false)}
+                className={`rounded px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition ${!isLiveMode ? "bg-cyanline text-slate-950 shadow-neon" : "text-slate-400 hover:text-white"}`}
+              >
+                Simulator
+              </button>
+              <button
+                onClick={() => setIsLiveMode(true)}
+                className={`rounded px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition ${isLiveMode ? "bg-violetline text-white shadow-neon-violet" : "text-slate-400 hover:text-white"}`}
+              >
+                Live Monitor
+              </button>
+            </div>
+            <StatusPill active={["online", "api-online"].includes(socketState)} danger={["offline", "api-offline"].includes(socketState)}>{socketState}</StatusPill>
+            <button onClick={onHome} className="grid h-10 w-10 place-items-center rounded-md border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-cyanline/60" title="Home">
+              <Home className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <StatusPill active={["online", "api-online"].includes(socketState)} danger={["offline", "api-offline"].includes(socketState)}>{socketState}</StatusPill>
-          <button onClick={onHome} className="grid h-10 w-10 place-items-center rounded-md border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-cyanline/60" title="Home">
-            <Home className="h-4 w-4" />
-          </button>
+        {/* Global Progress Bar */}
+        <div className="h-[2px] w-full bg-white/5">
+          <div 
+            className="h-full bg-cyanline shadow-[0_0_10px_#2ffcff] transition-all duration-500 ease-out" 
+            style={{ width: `${((currentStep + 1) / SIMULATION_STEPS.length) * 100}%` }} 
+          />
         </div>
       </header>
 
-      <div className="relative z-10 grid gap-4 xl:grid-cols-[340px_minmax(680px,1fr)_300px]">
-        <Panel title="Sender Node" icon={Send} className="min-h-[720px]">
-          <div className="space-y-4 p-4">
-            <label className="block">
-              <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Payload</span>
-              <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={5} disabled={simulationStarted && !finalized} className="w-full resize-none rounded-md border border-cyanline/20 bg-black/30 p-3 text-sm text-cyan-50 outline-none transition focus:border-cyanline disabled:opacity-60" />
-            </label>
-            <label className="block">
-              <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Communication Mode</span>
-              <select value={mode} onChange={(event) => setMode(event.target.value)} disabled={simulationStarted && !finalized} className="w-full rounded-md border border-violetline/25 bg-[#080d1f] p-3 text-sm text-slate-100 outline-none disabled:opacity-60">
-                {modes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-            </label>
-            <button disabled={busy} onClick={prepareSimulation} className="flex w-full items-center justify-center gap-2 rounded-md bg-cyanline px-4 py-3 font-bold text-slate-950 shadow-neon transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-60">
-              <Zap className="h-4 w-4" /> {busy ? "Preparing..." : "Send Message"}
-            </button>
-            <SimulationControls
-              mode={animationMode}
-              setMode={setAnimationMode}
-              isRunning={isRunning}
-              speed={animationSpeed}
-              setSpeed={setAnimationSpeed}
-              onStart={startSimulation}
-              onPause={pauseSimulation}
-              onNext={nextStep}
-              onPrev={prevStep}
-              onReset={resetSimulation}
-              currentStep={currentStep}
-              totalSteps={SIMULATION_STEPS.length}
-              disabled={busy || !simulationStarted}
-            />
-            <ManipulationPanel activeStep={activeStep} disabled={!simulationStarted || !activeStep.canManipulate} onInject={injectManipulation} selectedManipulation={activeManipulation} />
-            <div className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-xs leading-6 text-slate-400">
-              <p><span className="text-cyanline">Original:</span> {displayedResult.transmission.original}</p>
-              <p><span className="text-cyanline">Shared Secret:</span> {displayedResult.transmission.sharedSecret}</p>
-              <p><span className="text-cyanline">CRC:</span> {displayedResult.transmission.crc}</p>
-            </div>
-          </div>
-        </Panel>
+      <div className="relative z-10 flex flex-1 overflow-hidden">
+        {/* Left Sidebar: Control & Info */}
+        <aside className="flex w-96 flex-col border-r border-white/10 bg-black/20 backdrop-blur-sm">
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="glass neon-border flex flex-col overflow-hidden rounded-xl bg-white/[0.02]">
+              <div className="border-b border-white/10 bg-white/[0.03] px-4 py-3">
+                <h2 className="font-display text-sm font-bold uppercase tracking-widest text-white">Transmission Control</h2>
+              </div>
+              <div className="space-y-4 p-4">
+                <label className="block">
+                  <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Payload</span>
+                  <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={4} disabled={isLiveMode || (simulationStarted && !finalized)} className="w-full resize-none rounded-md border border-cyanline/20 bg-black/30 p-3 text-sm text-cyan-50 outline-none transition focus:border-cyanline disabled:opacity-60" />
+                  {isLiveMode && <p className="mt-1 text-[10px] text-violetline/80 italic text-center">Monitoring Network Traffic</p>}
+                </label>
+                
+                <label className="block">
+                  <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-slate-400">Communication Mode</span>
+                  <select value={mode} onChange={(event) => setMode(event.target.value)} disabled={isLiveMode || (simulationStarted && !finalized)} className="w-full rounded-md border border-violetline/25 bg-[#080d1f] p-3 text-sm text-slate-100 outline-none disabled:opacity-60">
+                    {modes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </label>
 
-        <section className="glass neon-border scanline relative min-h-[720px] overflow-hidden rounded-lg">
-          <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-            <div className="flex items-center gap-2 font-display text-xs uppercase tracking-[0.22em] text-cyan-100">
-              <Radio className="h-4 w-4 text-cyanline" /> Controlled 3D Quantum Channel
+                {!isLiveMode && (
+                  <button disabled={busy} onClick={prepareSimulation} className="flex w-full items-center justify-center gap-2 rounded-md bg-cyanline px-4 py-3 font-bold text-slate-950 shadow-neon transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-60">
+                    <Zap className="h-4 w-4" /> {busy ? "Preparing..." : "Send Message"}
+                  </button>
+                )}
+
+                <div className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-xs leading-6 text-slate-400">
+                  <p><span className="text-cyanline">Node:</span> Operator Station (Alpha)</p>
+                  <p><span className="text-cyanline">Shared Secret:</span> {displayedResult?.transmission?.sharedSecret || "--------"}</p>
+                </div>
+              </div>
             </div>
-            <StatusPill active={!finalized || displayedResult.metrics.secure} danger={finalized && !displayedResult.metrics.secure}>{simulationStarted ? activeStep.id : "idle"}</StatusPill>
+
+            {/* Integrated Step Composition Detail */}
+            <div className="rounded-xl border border-white/10 bg-cyanline/5 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                    <div className="h-1.5 w-1.5 rounded-full bg-cyanline shadow-neon" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-cyanline">Active Process: {activeStep.title}</span>
+                </div>
+                <p className="text-xs leading-relaxed text-slate-300">
+                    {activeStep.description}
+                </p>
+            </div>
+
+            {!isLiveMode && (
+              <SimulationControls
+                mode={animationMode}
+                setMode={setAnimationMode}
+                isRunning={isRunning}
+                speed={animationSpeed}
+                setSpeed={setAnimationSpeed}
+                onStart={startSimulation}
+                onPause={pauseSimulation}
+                onNext={nextStep}
+                onPrev={prevStep}
+                onReset={resetSimulation}
+                currentStep={currentStep}
+                totalSteps={SIMULATION_STEPS.length}
+                disabled={busy || !simulationStarted}
+              />
+            )}
+
+            {!isLiveMode && (
+               <ManipulationPanel activeStep={activeStep} disabled={!simulationStarted || !activeStep.canManipulate} onInject={injectManipulation} selectedManipulation={activeManipulation} />
+            )}
+
+            <div className="space-y-4">
+              <MetricCard label="Encryption Strength" value={displayedResult.metrics.encryptionStrength} unit="bit" progress={displayedResult.metrics.encryptionStrength / 256} />
+              <MetricCard label="Quantum Stability" value={displayedResult.metrics.quantumStability} unit="%" progress={displayedResult.metrics.quantumStability / 100} color="#9a5cff" />
+            </div>
+
+            {/* NEW: Intelligence HUD */}
+            {analytics && (
+              <div className="rounded-xl border border-white/10 bg-black/40 p-4 space-y-4 shadow-2xl">
+                <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-cyanline">QDAE Intelligence</h3>
+                  <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${analytics.intelligence.threatLevel === 'LOW' ? 'bg-emerald-400' : 'bg-danger'}`} />
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase text-slate-400">Channel Trust</span>
+                  <span className={`font-display text-xl font-bold ${analytics.intelligence.trustScore > 70 ? 'text-emerald-400' : 'text-danger'}`}>
+                    {analytics.intelligence.trustScore}%
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded border border-white/5 bg-white/[0.02] p-2 text-center">
+                    <p className="text-[8px] uppercase tracking-widest text-slate-500">Coherence</p>
+                    <p className="font-display text-sm text-slate-200">{Math.round(analytics.metrics.coherence * 100)}%</p>
+                  </div>
+                  <div className="rounded border border-white/5 bg-white/[0.02] p-2 text-center">
+                    <p className="text-[8px] uppercase tracking-widest text-slate-500">Entropy</p>
+                    <p className="font-display text-sm text-slate-200">{analytics.metrics.entropy.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-cyanline/20 bg-cyanline/5 p-3">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-cyanline">Inference Prediction</p>
+                  <p className="mt-1 text-[11px] font-bold text-white uppercase">{analytics.intelligence.inference.type}</p>
+                  <p className="mt-1 text-[10px] leading-relaxed text-slate-400">{analytics.intelligence.inference.diagnosis}</p>
+                </div>
+
+                {analytics.intelligence.trustScore < 50 && (
+                  <div className="flex items-center gap-2 rounded bg-danger/20 p-2 text-[9px] font-bold text-danger animate-bounce">
+                    <AlertTriangle className="h-3 w-3" />
+                    ADAPTIVE RESPONSE: KEY ROTATION TRIGGERED
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          <div className="p-4">
-            <QuantumScene
-              activeStepId={activeStep.id}
-              progress={stepProgress}
+        </aside>
+
+        {/* Center: Main Visualization */}
+        <section className="relative flex flex-1 flex-col overflow-hidden bg-black/10 p-6">
+          <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+            <Panel label="Protocol Stage" value={activeStep.title} subValue={`Step ${currentStep + 1} of ${SIMULATION_STEPS.length}`} />
+            <Panel label="Packet Integrity" value={`${displayedResult.metrics.packetIntegrity}%`} subValue={displayedResult.transmission.crcValid ? "Valid CRC" : "Checksum Mismatch"} danger={!displayedResult.transmission.crcValid} />
+            <Panel label="Threat Detection" value={displayedResult.metrics.threatLevel > 50 ? "High" : "Low"} subValue={`${displayedResult.metrics.threatLevel}% probability`} danger={displayedResult.metrics.threatLevel > 50} />
+            <Panel label="Security Status" value={displayedResult.metrics.secure ? "Secure" : "Compromised"} subValue={displayedResult.metrics.secure ? "Channel Trusted" : "Attack Detected"} danger={!displayedResult.metrics.secure} />
+          </div>
+
+          <div className="glass neon-border relative flex-1 overflow-hidden rounded-2xl bg-black/40">
+            <QuantumScene 
+              activeStepId={activeStep.id} 
+              progress={stepProgress} 
               manipulation={activeManipulation}
               currentStepTitle={activeStep.title}
-              isIdle={!simulationStarted}
-              state={currentVisualState}
-              result={displayedResult}
+              state={currentVisualState} 
+              result={displayedResult} 
               finalized={finalized}
+              isIdle={!simulationStarted}
+              onStepClick={(idx) => {
+                if (!isLiveMode) {
+                  setCurrentStep(idx);
+                  setAnimationMode("manual");
+                  setIsRunning(false);
+                }
+              }}
             />
+            <div className="absolute inset-0 pointer-events-none border border-white/5" />
           </div>
+
         </section>
 
-        <Panel title="Receiver Analytics" icon={ShieldCheck} className="min-h-[720px]">
-          <div className="space-y-4 p-4">
-            <div className="grid gap-3">
-              <MetricCard label="AES Strength" value={displayedResult.metrics.encryptionStrength} suffix=" bit" />
-              <MetricCard label="Q Stability" value={displayedResult.metrics.quantumStability} suffix="%" tone={displayedResult.metrics.quantumStability < 80 ? "violet" : "cyan"} />
-              <MetricCard label="Error Rate" value={finalized ? displayedResult.metrics.errorRate : "--"} suffix={finalized ? "%" : ""} tone={finalized && displayedResult.metrics.errorRate > 18 ? "red" : "green"} />
-              <MetricCard label="Threat" value={finalized ? displayedResult.metrics.threatLevel : "--"} suffix={finalized ? "%" : ""} tone={finalized && displayedResult.metrics.threatLevel > 50 ? "red" : "cyan"} />
-            </div>
-            <div className="rounded-md border border-white/10 bg-black/25 p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs uppercase tracking-[0.18em] text-slate-400">Receiver Output</span>
-                <StatusPill active={finalized && displayedResult.transmission.crcValid} danger={finalized && !displayedResult.transmission.crcValid}>{finalized ? displayedResult.transmission.crcValid ? "CRC verified" : "CRC mismatch" : "locked"}</StatusPill>
-              </div>
-              <p className="min-h-16 text-sm leading-6 text-slate-200">{receiverMessage}</p>
-            </div>
-            <div className="rounded-md border border-white/10 bg-black/25 p-3">
-              <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-400"><ShieldAlert className="h-4 w-4 text-danger" /> Quantum Detection</div>
-              <p className={!finalized ? "text-slate-400" : displayedResult.quantum.detected ? "text-danger" : "text-emerald-300"}>{!finalized ? "Waiting for basis comparison..." : displayedResult.quantum.detected ? "Eavesdropping or disturbance detected" : "No disturbance above threshold"}</p>
-              <p className="mt-2 text-xs text-slate-500">Sample errors: {finalized ? displayedResult.quantum.sampled_errors : "--"} / {finalized ? displayedResult.quantum.compared_bits : "--"}</p>
-            </div>
-            <div className="rounded-md border border-white/10 bg-black/25 p-3">
-              <p className="mb-2 text-xs uppercase tracking-[0.18em] text-slate-400">Encrypted Message</p>
-              <p className="break-all font-mono text-xs leading-5 text-cyan-100">{simulationData ? displayedResult.transmission.encrypted : "Packet not prepared yet."}</p>
-            </div>
-          </div>
-        </Panel>
-      </div>
-
-      <div className="relative z-10 mt-4">
-        <LiveLogs logs={logs} />
+        {/* Right Sidebar: Full Height Logs */}
+        <aside className="w-80 border-l border-white/10 bg-black/40 backdrop-blur-md">
+          <LiveLogs logs={logs} />
+        </aside>
       </div>
     </main>
   );

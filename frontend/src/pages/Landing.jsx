@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ArrowRight, Cpu, KeyRound, Radio, ShieldCheck, Sparkles, Waves } from "lucide-react";
+import { ArrowRight, Cpu, KeyRound, Radio, ShieldCheck, Sparkles, Waves, MessageSquare, Terminal } from "lucide-react";
 import ParticleField from "../components/ParticleField.jsx";
 
 const features = [
@@ -32,13 +32,25 @@ export default function Landing({ onLaunch }) {
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
               A research-grade command dashboard for encrypted payload transfer, CRC integrity checks, Diffie-Hellman session exchange, and BB84-inspired eavesdropping detection.
             </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <button onClick={onLaunch} className="inline-flex items-center gap-2 rounded-md bg-cyanline px-5 py-3 font-bold text-slate-950 shadow-neon transition hover:scale-[1.02]">
-                Launch Dashboard <ArrowRight className="h-4 w-4" />
+            <div className="mt-8 flex flex-wrap gap-4">
+              <button 
+                onClick={() => onLaunch("dashboard")} 
+                className="inline-flex items-center gap-2 rounded-md bg-cyanline px-6 py-4 font-bold text-slate-950 shadow-neon transition hover:scale-[1.02]"
+              >
+                Launch Console <ArrowRight className="h-4 w-4" />
               </button>
-              <a href="#overview" className="rounded-md border border-white/15 bg-white/[0.06] px-5 py-3 font-semibold text-slate-100 transition hover:border-violetline/70">
-                View System
-              </a>
+              <button 
+                onClick={() => onLaunch("messenger")} 
+                className="inline-flex items-center gap-2 rounded-md border border-violetline/50 bg-violetline/10 px-6 py-4 font-bold text-violet-100 shadow-neon-violet transition hover:scale-[1.02]"
+              >
+                Secure Messenger <MessageSquare className="h-4 w-4" />
+              </button>
+              <button 
+                onClick={() => onLaunch("attacker")} 
+                className="inline-flex items-center gap-2 rounded-md border border-red-500/50 bg-red-500/10 px-6 py-4 font-bold text-red-100 shadow-neon-red transition hover:scale-[1.02]"
+              >
+                Attacker Terminal <Terminal className="h-4 w-4" />
+              </button>
             </div>
           </motion.div>
 
