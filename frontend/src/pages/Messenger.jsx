@@ -16,6 +16,7 @@ export default function Messenger({ onHome }) {
   const [transmissionProgress, setTransmissionProgress] = useState(0);
   const [isTransmitting, setIsTransmitting] = useState(false);
   const [securityStatus, setSecurityStatus] = useState("stable"); // stable, attack, crc
+  const [roomUsers, setRoomUsers] = useState([]);
   const [socket, setSocket] = useState(null);
 
   const scrollRef = useRef(null);
@@ -67,6 +68,10 @@ export default function Messenger({ onHome }) {
         setMessages(prev => [...prev, newMessage]);
     });
 
+    s.on("room:users", (data) => {
+        setRoomUsers(data.users);
+    });
+
     return () => s.disconnect();
   }, [room, user]);
 
@@ -87,16 +92,6 @@ export default function Messenger({ onHome }) {
       sender: user
     });
     
-    // Add local message immediately
-    const localMsg = {
-        id: Date.now() + "-local",
-        sender: user,
-        text: message,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isLocal: true,
-        secure: true
-    };
-    setMessages(prev => [...prev, localMsg]);
     setMessage("");
   };
 
@@ -134,34 +129,57 @@ export default function Messenger({ onHome }) {
       {!isJoined ? (
         <div className="relative z-10 flex flex-1 items-center justify-center p-6">
           <div className="glass neon-border w-full max-w-md rounded-xl p-8">
-            <h2 className="mb-6 text-center font-display text-2xl font-bold">Join Secure Session</h2>
-            <div className="space-y-4">
+            <div className="mb-6 text-center">
+                <h2 className="font-display text-3xl font-bold text-white">Initialize Session</h2>
+                <p className="mt-2 text-xs uppercase tracking-widest text-slate-500">Secure Node Registration</p>
+            </div>
+            
+            <div className="space-y-6">
               <div>
-                <label className="mb-2 block text-xs uppercase tracking-widest text-slate-400">Your Identity</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button onClick={() => setUser("Alice")} className={`flex items-center justify-center gap-2 rounded-md border p-3 transition ${user === "Alice" ? "border-cyanline bg-cyanline/10 text-cyanline shadow-neon" : "border-white/10 bg-white/5 text-slate-400"}`}>
-                    <User className="h-4 w-4" /> Alice
-                  </button>
-                  <button onClick={() => setUser("Bob")} className={`flex items-center justify-center gap-2 rounded-md border p-3 transition ${user === "Bob" ? "border-violetline bg-violetline/10 text-violetline shadow-neon-violet" : "border-white/10 bg-white/5 text-slate-400"}`}>
-                    <User className="h-4 w-4" /> Bob
-                  </button>
+                <label className="mb-2 block text-xs font-black uppercase tracking-widest text-cyanline">Operator Name</label>
+                <div className="relative">
+                    <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                    <input 
+                        type="text" 
+                        value={user} 
+                        onChange={(e) => setUser(e.target.value)}
+                        className="w-full rounded-md border border-white/10 bg-black/40 py-3.5 pl-10 pr-4 text-sm outline-none focus:border-cyanline transition-all focus:bg-cyanline/5"
+                        placeholder="e.g. Alice, Eve, Dr. Smith..."
+                    />
                 </div>
               </div>
+
               <div>
-                <label className="mb-2 block text-xs uppercase tracking-widest text-slate-400">Room Identifier</label>
+                <label className="mb-2 block text-xs font-black uppercase tracking-widest text-violetline">Channel Identifier</label>
                 <div className="relative">
                     <Users className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                     <input 
                         type="text" 
                         value={room} 
                         onChange={(e) => setRoom(e.target.value)}
-                        className="w-full rounded-md border border-white/10 bg-black/40 py-3 pl-10 pr-4 text-sm outline-none focus:border-cyanline"
-                        placeholder="Enter room name..."
+                        className="w-full rounded-md border border-white/10 bg-black/40 py-3.5 pl-10 pr-4 text-sm outline-none focus:border-violetline transition-all focus:bg-violetline/5"
+                        placeholder="e.g. project-x, secure-chat-1..."
                     />
                 </div>
               </div>
-              <button onClick={joinRoom} className="w-full rounded-md bg-cyanline py-4 font-bold text-slate-950 shadow-neon transition hover:scale-[1.02]">
-                Initialize Connection
+
+              <div className="rounded-lg bg-white/[0.03] p-4 border border-white/5">
+                <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 shrink-0 rounded-full bg-emerald-500/10 grid place-items-center text-emerald-400">
+                        <Lock className="h-5 w-5" />
+                    </div>
+                    <p className="text-[10px] leading-relaxed text-slate-400 uppercase tracking-tight">
+                        By joining, you establish a <span className="text-emerald-400">quantum-secure entanglement</span> with all other operators in this channel.
+                    </p>
+                </div>
+              </div>
+
+              <button 
+                onClick={joinRoom} 
+                disabled={!user.trim() || !room.trim()}
+                className="w-full rounded-md bg-cyanline py-4 font-bold text-slate-950 shadow-neon transition hover:scale-[1.02] active:scale-95 disabled:opacity-50"
+              >
+                Establish Connection
               </button>
             </div>
           </div>
@@ -171,22 +189,25 @@ export default function Messenger({ onHome }) {
           {/* Sidebar */}
           <aside className="hidden w-72 border-r border-white/10 bg-black/20 md:block">
             <div className="p-4">
-                <p className="mb-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">Connected Users</p>
+                <p className="mb-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">Connected Operators</p>
                 <div className="space-y-2">
-                    <div className="flex items-center gap-3 rounded-lg border border-cyanline/20 bg-cyanline/5 p-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-cyanline text-slate-950 font-bold">A</div>
-                        <div>
-                            <p className="text-xs font-bold text-white">Alice (Sender)</p>
-                            <p className="text-[10px] text-emerald-400">Online</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-3 rounded-lg border border-violetline/20 bg-violetline/5 p-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violetline text-white font-bold">B</div>
-                        <div>
-                            <p className="text-xs font-bold text-white">Bob (Receiver)</p>
-                            <p className="text-[10px] text-emerald-400">Online</p>
-                        </div>
-                    </div>
+                    {roomUsers.map((u, idx) => (
+                      <div key={idx} className={`flex items-center gap-3 rounded-lg border p-3 transition-all ${u === user ? 'border-cyanline/30 bg-cyanline/10' : 'border-white/5 bg-white/[0.02]'}`}>
+                          <div className={`flex h-8 w-8 items-center justify-center rounded-full font-bold text-slate-950 ${u === user ? 'bg-cyanline shadow-neon' : 'bg-slate-700 text-white'}`}>
+                            {u.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 overflow-hidden">
+                              <p className="truncate text-xs font-bold text-white">{u} {u === user && "(You)"}</p>
+                              <div className="flex items-center gap-1.5">
+                                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                <span className="text-[9px] text-emerald-400/80 uppercase tracking-tighter">Synchronized</span>
+                              </div>
+                          </div>
+                      </div>
+                    ))}
+                    {roomUsers.length === 0 && (
+                      <p className="py-4 text-center text-[10px] text-slate-500 italic">Establishing node presence...</p>
+                    )}
                 </div>
                 
                 <div className="mt-8 rounded-lg border border-white/10 bg-white/5 p-4">
@@ -220,7 +241,7 @@ export default function Messenger({ onHome }) {
                       : "bg-white/10 border border-white/20 text-white rounded-tl-none"
                   }`}>
                     <div className="mb-1 flex items-center justify-between gap-4">
-                        <span className={`text-[10px] font-bold uppercase ${msg.sender === "Alice" ? "text-cyanline" : "text-violetline"}`}>
+                        <span className={`text-[10px] font-bold uppercase ${msg.sender === user ? "text-cyanline" : "text-violetline"}`}>
                             {msg.sender}
                         </span>
                         <span className="text-[9px] text-slate-500">{msg.time}</span>

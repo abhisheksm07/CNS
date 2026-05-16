@@ -198,9 +198,18 @@ def handle_session_join(payload):
     join_room(room_id)
     
     if room_id not in ROOMS:
-        ROOMS[room_id] = {"manipulation": "none"}
+        ROOMS[room_id] = {"manipulation": "none", "users": []}
+    
+    if role not in ROOMS[room_id]["users"]:
+        ROOMS[room_id]["users"].append(role)
         
     emit("session:joined", {"roomId": room_id, "role": role, "time": now(), "manipulation": ROOMS[room_id]["manipulation"]})
+    
+    # Broadcast to room AND specifically to the new joiner to ensure UI updates
+    user_list = {"users": ROOMS[room_id]["users"]}
+    emit("room:users", user_list, room=room_id)
+    emit("room:users", user_list) # Direct reply to joiner
+    
     push_log("info", f"[SESSION] {role} joined room '{room_id}'", "system")
 
 

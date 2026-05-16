@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { io } from "socket.io-client";
-import { Home, Radio, Send, ShieldAlert, ShieldCheck, Zap, AlertTriangle } from "lucide-react";
+import { Home, Radio, Send, ShieldAlert, ShieldCheck, Zap, AlertTriangle, Users } from "lucide-react";
 import LiveLogs from "../components/LiveLogs.jsx";
 import ManipulationPanel from "../components/ManipulationPanel.jsx";
 import MetricCard from "../components/MetricCard.jsx";
@@ -268,15 +268,32 @@ export default function Dashboard({ onHome }) {
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 rounded-md border border-white/10 bg-black/20 p-1">
+              <div className="flex items-center px-2">
+                <Users className="mr-2 h-3.5 w-3.5 text-slate-500" />
+                <input 
+                  type="text" 
+                  value={roomId} 
+                  onChange={(e) => {
+                    const newRoom = e.target.value;
+                    setRoomId(newRoom);
+                    if (isLiveMode && socket) {
+                      socket.emit("session:join", { roomId: newRoom, role: "observer" });
+                    }
+                  }}
+                  placeholder="Room ID..."
+                  className="w-24 bg-transparent text-[10px] uppercase font-bold text-white outline-none focus:text-cyanline"
+                />
+              </div>
+              <div className="h-4 w-px bg-white/10" />
               <button
                 onClick={() => setIsLiveMode(false)}
-                className={`rounded px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition ${!isLiveMode ? "bg-cyanline text-slate-950 shadow-neon" : "text-slate-400 hover:text-white"}`}
+                className={`rounded px-3 py-1 text-[10px] font-bold uppercase transition-all ${!isLiveMode ? "bg-cyanline text-slate-950 shadow-neon" : "text-slate-400 hover:text-white"}`}
               >
                 Simulator
               </button>
               <button
                 onClick={() => setIsLiveMode(true)}
-                className={`rounded px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition ${isLiveMode ? "bg-violetline text-white shadow-neon-violet" : "text-slate-400 hover:text-white"}`}
+                className={`rounded px-3 py-1 text-[10px] font-bold uppercase transition-all ${isLiveMode ? "bg-cyanline text-slate-950 shadow-neon" : "text-slate-400 hover:text-white"}`}
               >
                 Live Monitor
               </button>
