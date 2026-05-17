@@ -79,7 +79,7 @@ export default function AttackerTerminal({ onHome }) {
         }
     });
 
-    s.on("sim:step", (data) => {
+    s.on("global:sim:step", (data) => {
         console.log("Sim Step Received:", data.stepId, data.progress);
         setHookedPacket(prev => {
             if (prev && prev.txId === data.txId) {
@@ -95,7 +95,7 @@ export default function AttackerTerminal({ onHome }) {
         }
     });
 
-    s.on("recv:message", (data) => {
+    s.on("global:recv:message", (data) => {
         setHookedPacket(prev => (prev && prev.txId === data.txId ? null : prev));
         setDetectedPackets(prev => prev.filter(p => p.txId !== data.txId));
         const newLog = { id: Date.now() + Math.random(), msg: `[RESULT] TX-${data.txId.slice(0,8)} delivered. Secure: ${data.secure}`, type: data.secure ? "info" : "error", time: new Date().toLocaleTimeString([], { hour12: false }) };

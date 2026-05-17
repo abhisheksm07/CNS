@@ -301,8 +301,7 @@ def handle_sender_message(payload):
             "time":         now(),
         }
         socketio.emit("sim:step", step_payload, room=room_id)
-        socketio.emit("sim:step", step_payload) # Global broadcast for sniffer
-        
+        socketio.emit("global:sim:step", step_payload)
         socketio.sleep(delay)
 
     # Final logic based on whether the packet was intercepted in-flight
@@ -334,18 +333,22 @@ def handle_sender_message(payload):
         "time":          now(),
     }
     socketio.emit("sim:quantum", quantum_payload, room=room_id)
-    socketio.emit("sim:quantum", quantum_payload) # Global broadcast
+    socketio.emit("global:sim:quantum", quantum_payload) # Global broadcast
  
     # NEW Intelligence Layer
     analytics = QDAE.analyze(tx_id, transmission, quantum_result, noise_level=0.5 if noise else 0.0)
     socketio.emit("sim:analytics", analytics, room=room_id)
-    socketio.emit("sim:analytics", analytics) # Global broadcast
+    socketio.emit("global:sim:analytics", analytics) # Global broadcast
 
     # Deliver the message to the Receiver
     recv_payload = {
         "txId":       tx_id,
         "sender":     sender_name,
         "decrypted":  transmission["decrypted"],
+        "encrypted":  transmission["encrypted"],
+        "sharedSecret": transmission["sharedSecret"],
+        "crc":        transmission["crc"],
+        "receivedCrc": transmission["receivedCrc"],
         "crcValid":   transmission["crcValid"],
         "secure":     metrics["secure"],
         "metrics":    metrics,
@@ -355,7 +358,7 @@ def handle_sender_message(payload):
         "time":       now(),
     }
     socketio.emit("recv:message", recv_payload, room=room_id)
-    socketio.emit("recv:message", recv_payload) # Global broadcast
+    socketio.emit("global:recv:message", recv_payload) # Global broadcast
 
     if quantum_result["detected"]:
         push_log("critical", f"[LIVE] BB84 disturbance detected: {metrics['errorRate']}% error rate.", "quantum")

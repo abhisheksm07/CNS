@@ -60,6 +60,10 @@ export default function Messenger({ onHome }) {
             id: Date.now(),
             sender: data.sender,
             text: data.decrypted,
+            encrypted: data.encrypted,
+            sharedSecret: data.sharedSecret,
+            crc: data.crc,
+            receivedCrc: data.receivedCrc,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             secure: data.secure,
             manipulation: data.manipulation
@@ -94,6 +98,8 @@ export default function Messenger({ onHome }) {
     
     setMessage("");
   };
+
+  const [expandedMsg, setExpandedMsg] = useState(null);
 
   const activeStep = SIMULATION_STEPS.find(s => s.id === transmissionStep);
 
@@ -235,7 +241,7 @@ export default function Messenger({ onHome }) {
               
               {messages.map((msg) => (
                 <div key={msg.id} className={`flex ${msg.sender === user ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[80%] rounded-2xl p-4 ${
+                  <div className={`max-w-[85%] rounded-2xl p-4 transition-all ${
                     msg.sender === user 
                       ? "bg-cyanline/10 border border-cyanline/30 text-white rounded-tr-none" 
                       : "bg-white/10 border border-white/20 text-white rounded-tl-none"
@@ -244,10 +250,37 @@ export default function Messenger({ onHome }) {
                         <span className={`text-[10px] font-bold uppercase ${msg.sender === user ? "text-cyanline" : "text-violetline"}`}>
                             {msg.sender}
                         </span>
-                        <span className="text-[9px] text-slate-500">{msg.time}</span>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => setExpandedMsg(expandedMsg === msg.id ? null : msg.id)}
+                            className="text-[9px] uppercase tracking-tighter text-slate-500 hover:text-cyanline"
+                          >
+                            {expandedMsg === msg.id ? "[Hide Trace]" : "[Trace Analysis]"}
+                          </button>
+                          <span className="text-[9px] text-slate-500">{msg.time}</span>
+                        </div>
                     </div>
                     <p className="text-sm leading-relaxed">{msg.text}</p>
                     
+                    {expandedMsg === msg.id && msg.encrypted && (
+                      <div className="mt-3 space-y-2 rounded-lg bg-black/40 p-3 font-mono text-[9px] border border-white/5">
+                        <div>
+                          <p className="text-cyanline uppercase font-bold tracking-widest mb-1">AES-256 Ciphertext</p>
+                          <p className="break-all text-slate-400 leading-tight">{msg.encrypted}</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 border-t border-white/5 pt-2">
+                          <div>
+                            <p className="text-violetline uppercase font-bold mb-1">Shared Secret</p>
+                            <p className="truncate text-slate-400">{msg.sharedSecret}</p>
+                          </div>
+                          <div>
+                            <p className="text-signal uppercase font-bold mb-1">Integrity (CRC)</p>
+                            <p className="text-slate-400">{msg.crc} → {msg.receivedCrc}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {!msg.isLocal && (
                         <div className={`mt-2 flex items-center gap-2 border-t border-white/10 pt-2 text-[9px] font-bold uppercase tracking-wider ${msg.secure ? "text-emerald-400" : "text-danger"}`}>
                             {msg.secure ? (
